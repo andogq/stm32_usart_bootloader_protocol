@@ -1,16 +1,6 @@
-use std::{io, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::{builder::PossibleValue, Parser, Subcommand, ValueEnum};
-use thiserror::Error;
-
-#[derive(Error, Debug)]
-#[error(transparent)]
-pub enum UartControlError {
-    SerialPort(#[from] serialport::Error),
-    #[error("Unable to convert path to string")]
-    PathError,
-    IoError(#[from] io::Error),
-}
 
 #[derive(Clone)]
 pub enum DataBits {

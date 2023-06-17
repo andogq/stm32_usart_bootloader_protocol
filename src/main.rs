@@ -1,9 +1,23 @@
 mod args;
+mod stm_device;
+
+use std::time::Duration;
 
 use clap::Parser;
 use serialport::{available_ports, SerialPortType, UsbPortInfo};
 
 use args::*;
+use stm_device::{StmDevice, StmDeviceError};
+use thiserror::Error;
+
+#[derive(Error, Debug)]
+#[error(transparent)]
+pub enum UartControlError {
+    SerialPort(#[from] serialport::Error),
+    #[error("Unable to convert path to string")]
+    PathError,
+    StmDevice(#[from] StmDeviceError),
+}
 
 fn main() -> Result<(), UartControlError> {
     let args = Args::parse();
@@ -58,26 +72,20 @@ fn main() -> Result<(), UartControlError> {
                 parity,
                 stop_bits,
             } => {
-                let mut port = serialport::new(
-                    device_path.to_str().ok_or(UartControlError::PathError)?,
-                    baud,
-                )
-                .data_bits(data_bits.into())
-                .parity(parity.into())
-                .stop_bits(stop_bits.into())
-                .open()?;
+                let mut device = StmDevice::new(
+                    serialport::new(
+                        device_path.to_str().ok_or(UartControlError::PathError)?,
+                        baud,
+                    )
+                    .data_bits(data_bits.into())
+                    .parity(parity.into())
+                    .stop_bits(stop_bits.into())
+                    .timeout(Duration::from_millis(200))
+                    .open()?,
+                );
 
-                // Wake up chip
-                port.write_all(&[0x7F])?;
-
-                // Wait for response
-                let mut response_buf = [0u8; 1];
-                port.read_exact(&mut response_buf)?;
-                if response_buf[0] == 0x79 {
-                    println!("Device awoken successfully");
-                } else {
-                    println!("Unknown byte recieved from device: {:#x?}", response_buf[0]);
-                }
+                device.initialise()?;
+                println!("Device initialised successfully");
             }
         };
     }
