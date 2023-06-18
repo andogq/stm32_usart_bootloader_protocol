@@ -7,5 +7,6 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.3.4", features = ["derive"] }
+num_enum = "0.6.1"
 serialport = "4.2.1"
 thiserror = "1.0.40"
