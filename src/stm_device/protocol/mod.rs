@@ -4,6 +4,8 @@ use thiserror::Error;
 
 pub use command::{Command, CommonCommand, PostV4Command, PreV4Command};
 
+use super::StmDeviceError;
+
 #[derive(Debug, Clone)]
 pub struct ProtocolVersion {
     pub version: Option<(u8, u8)>,
@@ -94,6 +96,30 @@ impl TryFrom<&[u8]> for Protocol {
                 version,
                 unknown_commands,
             })
+        }
+    }
+}
+
+pub enum Response {
+    Ack,
+    Nack,
+}
+impl Response {
+    pub fn ack(self) -> Result<(), StmDeviceError> {
+        match self {
+            Self::Ack => Ok(()),
+            Self::Nack => Err(StmDeviceError::Nack),
+        }
+    }
+}
+impl TryFrom<u8> for Response {
+    type Error = StmDeviceError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0x79 => Ok(Self::Ack),
+            0x1F => Ok(Self::Nack),
+            _ => Err(Self::Error::InvalidResponse(value)),
         }
     }
 }

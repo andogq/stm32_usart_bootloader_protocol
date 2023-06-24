@@ -35,13 +35,12 @@ pub enum Command {
     PreV4(PreV4Command),
     PostV4(PostV4Command),
 }
-impl From<Command> for Vec<u8> {
+impl From<Command> for u8 {
     fn from(command: Command) -> Self {
-        let b = match command {
+        match command {
             Command::Common(command) => command as u8,
             Command::PreV4(command) => command as u8,
             Command::PostV4(command) => command as u8,
-        };
-        vec![b, !b]
+        }
     }
 }

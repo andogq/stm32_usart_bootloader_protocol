@@ -5,10 +5,7 @@ use std::io;
 use serialport::SerialPort;
 use thiserror::Error;
 
-use self::protocol::{Command, CommonCommand, Protocol, ProtocolError, ProtocolVersion};
-
-const ACK: u8 = 0x79;
-const NACK: u8 = 0x1F;
+use self::protocol::{Command, CommonCommand, Protocol, ProtocolError, ProtocolVersion, Response};
 
 #[derive(Debug, Error)]
 pub enum StmDeviceError {
@@ -16,8 +13,10 @@ pub enum StmDeviceError {
     AlreadyInitialised,
     #[error("device is not initialised")]
     Uninitialised,
-    #[error("expected (n)ack, recieved {0:#x}")]
-    ExpectedAck(u8),
+    #[error("expected response, recieved {0:#x}")]
+    InvalidResponse(u8),
+    #[error("recieved NACK")]
+    Nack,
     #[error("failed to run command: {0:?}")]
     CommandFail(Command),
     #[error("retries exceeded to run command: {0:?}")]
@@ -70,7 +69,7 @@ impl StmDevice {
             self.port.write_all(&[0x7F])?;
 
             // Wait for response
-            while !self.get_ack()? {}
+            self.get_ack()?;
 
             // Indicate that device is now initialised
             self.initialised = true;
@@ -87,7 +86,7 @@ impl StmDevice {
         let response_bytes = self.read_byte()? + 1;
         let response = self.read_bytes(response_bytes as usize)?;
 
-        self.get_ack().ok();
+        self.get_ack()?;
 
         // Attempt to determine protocol version
         Ok(Protocol::try_from(response.as_slice())?)
@@ -98,7 +97,7 @@ impl StmDevice {
 
         let response = self.read_bytes(3)?;
 
-        self.get_ack().ok();
+        self.get_ack()?;
 
         self.protocol_version = ProtocolVersion::from(response[0]);
         Ok(self.protocol_version.clone())
@@ -109,7 +108,7 @@ impl StmDevice {
 
         let response_size = self.read_byte()? + 1;
         let product_id = ProductId::from(self.read_bytes(response_size as usize)?.as_slice());
-        self.get_ack().ok();
+        self.get_ack()?;
 
         Ok(product_id)
     }
@@ -130,8 +129,8 @@ impl StmDevice {
     fn retry_command(&mut self, command: Command) -> Result<(), StmDeviceError> {
         for _ in 0..self.retry_amount {
             match self.send_command(command) {
-                Ok(true) => return Ok(()),
-                Ok(false) => return Err(StmDeviceError::CommandFail(command)),
+                Ok(Response::Ack) => return Ok(()),
+                Ok(Response::Nack) => return Err(StmDeviceError::CommandFail(command)),
                 Err(_) => (),
             }
         }
@@ -142,24 +141,22 @@ impl StmDevice {
     /// Sends a command to the device, and waits for the ACK. Returns `true` if the device
     /// acknowledged the command, indicating that the response can be read from it. Alternatively,
     /// `false` indicates that the command was discarded.
-    fn send_command(&mut self, command: Command) -> Result<bool, StmDeviceError> {
+    fn send_command(&mut self, command: Command) -> Result<Response, StmDeviceError> {
         if self.initialised {
-            self.port.write_all(&Vec::from(command))?;
-
-            self.get_ack()
+            self.send_byte(command.into())
         } else {
             Err(StmDeviceError::Uninitialised)
         }
     }
 
-    /// Attempts to read an `ACK` from the device, returning `true` if one is found, otherwise
-    /// returning `false`. [StmDeviceError] is returned
-    fn get_ack(&mut self) -> Result<bool, StmDeviceError> {
-        match self.read_byte()? {
-            ACK => Ok(true),
-            NACK => Ok(false),
-            b => Err(StmDeviceError::ExpectedAck(b)),
-        }
+    /// Attempts to read an `ACK` from the device
+    fn get_ack(&mut self) -> Result<(), StmDeviceError> {
+        self.get_response()?.ack()
+    }
+
+    /// Attempts to read a response from the device.
+    fn get_response(&mut self) -> Result<Response, StmDeviceError> {
+        Response::try_from(self.read_byte()?)
     }
 
     fn read_byte(&mut self) -> Result<u8, StmDeviceError> {
@@ -176,22 +173,15 @@ impl StmDevice {
 
     /// Calculates the checksum for a single byte (the compliment of it), and sends it to the
     /// device, and finally waits for an ACK.
-    fn send_byte(&mut self, byte: u8) -> Result<(), StmDeviceError> {
+    fn send_byte(&mut self, byte: u8) -> Result<Response, StmDeviceError> {
         self.port.write_all(&[byte, !byte])?;
-        self.get_ack()?;
-
-        Ok(())
+        self.get_response()
     }
 
     /// Calculates the checksum for the bytes, and sends it all to the device, waiting for an ACK.
-    fn send_bytes(&mut self, bytes: &[u8]) -> Result<(), StmDeviceError> {
-        self.port.write_all(dbg!(&[
-            bytes,
-            &[bytes.iter().fold(0, |checksum, &b| checksum ^ b)]
-        ]
-        .concat()))?;
-        self.get_ack()?;
-
-        Ok(())
+    fn send_bytes(&mut self, bytes: &[u8]) -> Result<Response, StmDeviceError> {
+        self.port
+            .write_all(&[bytes, &[bytes.iter().fold(0, |checksum, &b| checksum ^ b)]].concat())?;
+        self.get_response()
     }
 }
