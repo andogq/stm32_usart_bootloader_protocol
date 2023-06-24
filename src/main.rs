@@ -88,10 +88,9 @@ fn main() -> Result<(), UartControlError> {
                 println!("Device initialised successfully");
 
                 let protocol = device.get_protocol()?;
-                println!(
-                    "Device running protocol {}.{}",
-                    protocol.full_version.0, protocol.full_version.1
-                );
+                println!("Device running protocol {:?}", protocol.version.version);
+
+                println!("{:?}", device.read_memory(0x08000000, 16)?);
             }
         };
     }

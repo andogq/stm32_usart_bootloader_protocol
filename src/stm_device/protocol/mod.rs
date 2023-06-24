@@ -4,25 +4,45 @@ use thiserror::Error;
 
 pub use command::{Command, CommonCommand, PostV4Command, PreV4Command};
 
-#[derive(Debug)]
-pub enum ProtocolVersion {
-    Unknown,
-    PreV4,
-    PostV4,
+#[derive(Debug, Clone)]
+pub struct ProtocolVersion {
+    pub version: Option<(u8, u8)>,
 }
 impl ProtocolVersion {
+    pub fn unknown() -> Self {
+        Self { version: None }
+    }
+
+    pub fn is_known(&self) -> bool {
+        self.version.is_some()
+    }
+
+    pub fn is_post_v4(&self) -> bool {
+        self.version
+            .map(|version| version.0 >= 4)
+            .unwrap_or_default()
+    }
+
     pub fn parse_command(&self, command: u8) -> Option<Command> {
         let common = CommonCommand::try_from(command).map(Command::Common).ok();
-        let version = match self {
-            Self::Unknown => None,
-            Self::PreV4 => PreV4Command::try_from(command).map(Command::PreV4).ok(),
-            Self::PostV4 => PostV4Command::try_from(command).map(Command::PostV4).ok(),
-        };
 
-        match (common, version) {
-            (Some(command), _) => Some(command),
-            (_, Some(version)) => Some(version),
-            _ => None,
+        if common.is_some() {
+            common
+        } else if self.is_known() {
+            if self.is_post_v4() {
+                PostV4Command::try_from(command).map(Command::PostV4).ok()
+            } else {
+                PreV4Command::try_from(command).map(Command::PreV4).ok()
+            }
+        } else {
+            None
+        }
+    }
+}
+impl From<u8> for ProtocolVersion {
+    fn from(value: u8) -> Self {
+        Self {
+            version: Some(((value & 0xf0) >> 4, value & 0x0f)),
         }
     }
 }
@@ -40,9 +60,9 @@ pub enum ProtocolError {
     },
 }
 
+#[derive(Debug, Clone)]
 pub struct Protocol {
     pub version: ProtocolVersion,
-    pub full_version: (u8, u8),
 }
 
 impl TryFrom<&[u8]> for Protocol {
@@ -51,13 +71,10 @@ impl TryFrom<&[u8]> for Protocol {
     fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
         let mut bytes = bytes.iter();
 
-        let protocol = bytes.next().ok_or(ProtocolError::MissingProtocol)?;
-        let full_version = ((protocol & 0xf0) >> 4, protocol & 0x0f);
-        let version = if full_version.0 < 4 {
-            ProtocolVersion::PreV4
-        } else {
-            ProtocolVersion::PostV4
-        };
+        let version = bytes
+            .next()
+            .ok_or(ProtocolError::MissingProtocol)
+            .map(|&version| ProtocolVersion::from(version))?;
 
         // Make sure that the commands are valid
         let unknown_commands = bytes
@@ -71,10 +88,7 @@ impl TryFrom<&[u8]> for Protocol {
             .collect::<Vec<_>>();
 
         if unknown_commands.is_empty() {
-            Ok(Self {
-                version,
-                full_version,
-            })
+            Ok(Self { version })
         } else {
             Err(ProtocolError::UnknownCommands {
                 version,
